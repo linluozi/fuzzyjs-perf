@@ -1,5 +1,6 @@
 import { test, TestOptions } from "./test";
 import { match } from "./match";
+import { createScoreCache } from "./utils/scoreCache";
 
 export type ItemIterator<TItem> = (source: TItem) => string;
 
@@ -36,36 +37,21 @@ export function sort<TItem>(
   query: string,
   options: SortOptions<TItem>
 ): SortIterator<TItem> {
-  const cacheMap: Map<string, number> = new Map();
+  // `match` is expensive (it reshapes both strings and walks the whole source),
+  // and `Array.prototype.sort` asks for the same score again and again. The
+  // cache must key off `undefined`, not off truthiness, or every score of 0 is
+  // recomputed on every comparison it takes part in.
+  const scoreOf = createScoreCache(
+    (source: string): number =>
+      match(query, source, {
+        withScore: true,
+        caseSensitive: options.caseSensitive,
+      }).score as number
+  );
 
   return (leftItem, rightItem) => {
-    const leftSource = options.iterator(leftItem);
-    const rightSource = options.iterator(rightItem);
-
-    const cachedLeftMatch = cacheMap.get(leftSource);
-    const cachedRightMatch = cacheMap.get(rightSource);
-
-    const leftScore = cachedLeftMatch
-      ? cachedLeftMatch
-      : match(query, leftSource, {
-          withScore: true,
-          caseSensitive: options.caseSensitive,
-        }).score;
-
-    const rightScore = cachedRightMatch
-      ? cachedRightMatch
-      : match(query, rightSource, {
-          withScore: true,
-          caseSensitive: options.caseSensitive,
-        }).score;
-
-    if (!cacheMap.has(leftSource)) {
-      cacheMap.set(leftSource, leftScore);
-    }
-
-    if (!cacheMap.has(rightSource)) {
-      cacheMap.set(rightSource, rightScore);
-    }
+    const leftScore = scoreOf(options.iterator(leftItem));
+    const rightScore = scoreOf(options.iterator(rightItem));
 
     if (rightScore === leftScore) {
       return 0;

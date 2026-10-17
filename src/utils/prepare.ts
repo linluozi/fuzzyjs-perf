@@ -1,5 +1,30 @@
 import { TestOptions } from "../test";
 
+/** Any character outside 7-bit ASCII. */
+// eslint-disable-next-line no-control-regex -- matching the ASCII range is the point
+const NON_ASCII = /[^\x00-\x7f]/;
+
+/** Combining diacritical marks, stripped after the NFD decomposition. */
+const COMBINING_MARKS = /[\u0300-\u036f]/g;
+
+/**
+ * Removes accents from a string.
+ *
+ * `normalize("NFD")` and the mark-stripping replace are both identity on pure
+ * ASCII — no ASCII character has a decomposition — so testing for ASCII first
+ * skips two full passes (and two allocations) on the most common input.
+ *
+ * @param str The input string
+ * @returns The input string without accents
+ */
+function stripAccents(str: string): string {
+  if (!NON_ASCII.test(str)) {
+    return str;
+  }
+
+  return str.normalize("NFD").replace(COMBINING_MARKS, "");
+}
+
 /**
  * This functions is used to throw when query or source is not defined as well
  * as normalizing and lower casing the input strings.
@@ -22,8 +47,8 @@ export function reshapeInput(
     throw new TypeError("Expecting source to be a string");
   }
 
-  let reshapedQuery = query.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-  let reshapedSource = source.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  let reshapedQuery = stripAccents(query);
+  let reshapedSource = stripAccents(source);
 
   if (!opts.caseSensitive) {
     reshapedQuery = reshapedQuery.toLowerCase();

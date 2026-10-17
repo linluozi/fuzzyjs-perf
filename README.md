@@ -134,7 +134,7 @@ type FilterOptions<TItem> = {
 **`sort`**
 
 Can be used as a [Array.prototype.sort](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/sort) callback.
-If you have a large array of objects, you might want to pass `idAccessor` as it creates a [memoization](https://en.wikipedia.org/wiki/Memoization) table which reduces drastically how many times the fuzzy matching algorithm will be called.
+Scores are memoized per source string for the duration of one `sort` call: the fuzzy matching algorithm runs once per distinct source, including sources that score `0` (which is what an unmatched source scores), no matter how many comparisons they take part in.
 
 ```ts
 import { sort as fuzzy } from "fuzzyjs";

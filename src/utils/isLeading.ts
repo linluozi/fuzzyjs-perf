@@ -19,7 +19,23 @@ export function isLeading(prevChar: string, char: string): boolean {
     prevChar === "/" ||
     prevChar === "\\";
 
-  const isCharLeading = char.toUpperCase() === char && /\w/.test(toLatin(char));
+  if (precededBySeparator) {
+    return true;
+  }
 
-  return precededBySeparator || isCharLeading;
+  const code = char.charCodeAt(0);
+
+  // Fast path for ASCII. `toLatin` is the identity on ASCII (no ASCII
+  // character lives in the combining diacritical block) and `/\w/` is exactly
+  // `[A-Za-z0-9_]`, so `char.toUpperCase() === char && /\w/.test(toLatin(char))`
+  // reduces to "A-Z, 0-9 or _". This is the branch that runs for every
+  // character of every ASCII source, and it used to pay for a `normalize()`
+  // plus a regex allocation each time.
+  if (code < 128) {
+    return (
+      (code >= 65 && code <= 90) || (code >= 48 && code <= 57) || code === 95
+    );
+  }
+
+  return char.toUpperCase() === char && /\w/.test(toLatin(char));
 }

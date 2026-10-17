@@ -41,6 +41,14 @@ export function test(
   let queryPos = 0;
   let sourcePos = 0;
 
+  // The loop below walks `source` by index but reads `reshapedSource`, which
+  // is shorter when the input contains explicit combining marks (a decomposed
+  // "café" becomes "cafe"). In that ragged case the original loop relies on
+  // `undefined === undefined` and can end up counting one extra match, so the
+  // early return is only taken when both lengths agree — that keeps the
+  // observable result byte-identical.
+  const canStopEarly = reshapedSource.length === source.length;
+
   // loop on source string
   while (sourcePos < source.length) {
     const actualSourceCharacter = reshapedSource[sourcePos];
@@ -50,6 +58,12 @@ export function test(
     if (actualSourceCharacter === queryCharacterWaitingForMatch) {
       // move query pos
       queryPos += 1;
+
+      // every query character has been matched: the remaining characters
+      // cannot change the answer, so there is no point walking them
+      if (canStopEarly && queryPos === reshapedQuery.length) {
+        return true;
+      }
     }
 
     sourcePos += 1;
