@@ -1,5 +1,10 @@
 # fuzzyjs
 
+> **Performance study fork.** Upstream: [gjuchault/fuzzyjs](https://github.com/gjuchault/fuzzyjs) @ `ffd9898`.
+> The first commit here fixes a cache-hit check that treated a score of `0` as "not computed yet", so
+> `sort()` recomputed every unmatched source on every comparison. Report, charts and a reproducible
+> A/B benchmark: [`OPTIMIZATION.md`](./OPTIMIZATION.md) · `node bench/run.mjs baseline candidate`.
+
 ![NPM](https://img.shields.io/npm/l/@gjuchault/typescript-library-starter)
 ![NPM](https://img.shields.io/npm/v/@gjuchault/typescript-library-starter)
 ![GitHub Workflow Status](https://github.com/gjuchault/typescript-library-starter/actions/workflows/typescript-library-starter.yml/badge.svg?branch=main)

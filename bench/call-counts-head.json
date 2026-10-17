@@ -1,0 +1,54 @@
+{
+  "implementation": "head",
+  "records": [
+    {
+      "label": "cities 'ah' (many zero scores)",
+      "query": "ah",
+      "n": 5977,
+      "distinct": 4672,
+      "calls": 41851
+    },
+    {
+      "label": "cities 'a'",
+      "query": "a",
+      "n": 5977,
+      "distinct": 4672,
+      "calls": 24841
+    },
+    {
+      "label": "cities 'zzz' (all zero scores)",
+      "query": "zzz",
+      "n": 5977,
+      "distinct": 4672,
+      "calls": 11952
+    },
+    {
+      "label": "cities 'new york'",
+      "query": "new york",
+      "n": 5977,
+      "distinct": 4672,
+      "calls": 12064
+    },
+    {
+      "label": "1000 items / 10 distinct, all zero",
+      "query": "zzqq",
+      "n": 1000,
+      "distinct": 10,
+      "calls": 1998
+    },
+    {
+      "label": "1000 distinct, all matching",
+      "query": "alp",
+      "n": 1000,
+      "distinct": 1000,
+      "calls": 1000
+    },
+    {
+      "label": "1000 distinct, score exactly 0",
+      "query": "a",
+      "n": 1000,
+      "distinct": 1000,
+      "calls": 1998
+    }
+  ]
+}

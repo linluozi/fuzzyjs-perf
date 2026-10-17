@@ -1,0 +1,445 @@
+diff --git a/README.md b/README.md
+index bc39371..abba936 100644
+--- a/README.md
++++ b/README.md
+@@ -134,7 +134,7 @@ type FilterOptions<TItem> = {
+ **`sort`**
+ 
+ Can be used as a [Array.prototype.sort](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/sort) callback.
+-If you have a large array of objects, you might want to pass `idAccessor` as it creates a [memoization](https://en.wikipedia.org/wiki/Memoization) table which reduces drastically how many times the fuzzy matching algorithm will be called.
++Scores are memoized per source string for the duration of one `sort` call: the fuzzy matching algorithm runs once per distinct source, including sources that score `0` (which is what an unmatched source scores), no matter how many comparisons they take part in.
+ 
+ ```ts
+ import { sort as fuzzy } from "fuzzyjs";
+diff --git a/src/__tests__/sort.regression.test.ts b/src/__tests__/sort.regression.test.ts
+new file mode 100644
+index 0000000..11dfa3e
+--- /dev/null
++++ b/src/__tests__/sort.regression.test.ts
+@@ -0,0 +1,147 @@
++import test from "ava";
++import { sort, SortOptions } from "../array";
++import { match } from "../match";
++
++interface Item {
++  id: number;
++  name: string;
++}
++
++/**
++ * Independent oracle: stable-sort the items by the score `match` gives them.
++ * It never goes through the cache that `sort` uses, so any wrong cached value
++ * shows up as a different order.
++ */
++function referenceSort<TItem>(
++  query: string,
++  items: TItem[],
++  options: SortOptions<TItem>
++): TItem[] {
++  return items
++    .map((item, index) => ({
++      item,
++      index,
++      score: match(query, options.iterator(item), {
++        withScore: true,
++        caseSensitive: options.caseSensitive,
++      }).score as number,
++    }))
++    .sort((left, right) => right.score - left.score || left.index - right.index)
++    .map((entry) => entry.item);
++}
++
++function ids(items: Item[]): number[] {
++  return items.map((item) => item.id);
++}
++
++test("orders exactly like an uncached score computation", (t) => {
++  const items: Item[] = [
++    { id: 0, name: "Alpha Beta Gamma" },
++    { id: 1, name: "alpha beta gamma" },
++    { id: 2, name: "ALPHA BETA GAMMA" },
++    { id: 3, name: "zzz nothing here" },
++    { id: 4, name: "Alpha Beta Gamma" },
++    { id: 5, name: "café bravo charlie" },
++    { id: 6, name: "" },
++    { id: 7, name: "a" },
++  ];
++
++  for (const query of ["abg", "a", "zz", "ALPHA", ""]) {
++    for (const caseSensitive of [false, true]) {
++      const options = { iterator: (item: Item) => item.name, caseSensitive };
++      t.deepEqual(
++        ids(items.slice().sort(sort(query, options))),
++        ids(referenceSort(query, items, options)),
++        `query=${JSON.stringify(query)} caseSensitive=${caseSensitive}`
++      );
++    }
++  }
++});
++
++test("keeps items whose score is exactly 0 in a stable order", (t) => {
++  // "A" is leading (+10) and the ten following characters score -1 each, so
++  // the final score is exactly 0 even though the query does match.
++  const zeroScore = Array.from({ length: 12 }, (_, i) => ({
++    id: i,
++    name: `A${String(i).padStart(10, "0")}`,
++  }));
++  const noMatch = Array.from({ length: 12 }, (_, i) => ({
++    id: 100 + i,
++    name: `zzz-${i}`,
++  }));
++
++  t.is(match("a", zeroScore[0].name).score, 0, "precondition: a real 0 score");
++  t.true(match("a", zeroScore[0].name).match, "precondition: it does match");
++  t.is(match("a", noMatch[0].name).score, 0, "precondition: no match is 0 too");
++  t.false(match("a", noMatch[0].name).match);
++
++  const items = [...zeroScore, ...noMatch];
++  const options = { iterator: (item: Item) => item.name };
++
++  // Every item scores 0, so the sort must be a no-op; if the cache treated 0 as
++  // "missing" it would still be a no-op, but a wrong cache value would not.
++  t.deepEqual(ids(items.slice().sort(sort("a", options))), ids(items));
++});
++
++test("keeps duplicate sources and case variants apart", (t) => {
++  const items: Item[] = [
++    { id: 1, name: "Set Syntax: JavaScript" },
++    { id: 2, name: "set syntax: javascript" },
++    { id: 3, name: "SET SYNTAX: JAVASCRIPT" },
++    { id: 4, name: "Set Syntax: JavaScript" },
++    { id: 5, name: "Set Syntax: Java" },
++    { id: 6, name: "Set Syntax: CSS" },
++  ];
++
++  for (const query of ["ssjs", "ssj", "javascript", "SSJS"]) {
++    for (const caseSensitive of [false, true]) {
++      const options = { iterator: (item: Item) => item.name, caseSensitive };
++      t.deepEqual(
++        ids(items.slice().sort(sort(query, options))),
++        ids(referenceSort(query, items, options))
++      );
++    }
++  }
++});
++
++test("handles a large corpus of mostly non-matching items", (t) => {
++  const items: Item[] = Array.from({ length: 300 }, (_, i) => ({
++    id: i,
++    name: i % 3 === 0 ? `Zulu ${i}` : `Alpha Bravo ${i % 17}`,
++  }));
++
++  const options = { iterator: (item: Item) => item.name };
++  t.deepEqual(
++    ids(items.slice().sort(sort("zzz", options))),
++    ids(referenceSort("zzz", items, options))
++  );
++  t.deepEqual(
++    ids(items.slice().sort(sort("ab", options))),
++    ids(referenceSort("ab", items, options))
++  );
++});
++
++test("does not let the cache leak between two sort calls", (t) => {
++  const items: Item[] = [
++    { id: 1, name: "Alpha" },
++    { id: 2, name: "Alpine" },
++    { id: 3, name: "Beta" },
++  ];
++
++  const first = ids(
++    items.slice().sort(sort("al", { iterator: (item) => item.name }))
++  );
++  const second = ids(
++    items.slice().sort(sort("be", { iterator: (item) => item.name }))
++  );
++
++  t.deepEqual(first, [1, 2, 3]);
++  t.deepEqual(second, [3, 1, 2]);
++});
++
++test("sorts an empty array and a single item", (t) => {
++  const options = { iterator: (item: Item) => item.name };
++  const empty: Item[] = [];
++  t.deepEqual(empty.sort(sort("a", options)), []);
++  t.deepEqual(ids([{ id: 1, name: "only" }].sort(sort("a", options))), [1]);
++});
+diff --git a/src/array.ts b/src/array.ts
+index 42ce88d..0fd3213 100644
+--- a/src/array.ts
++++ b/src/array.ts
+@@ -1,5 +1,6 @@
+ import { test, TestOptions } from "./test";
+ import { match } from "./match";
++import { createScoreCache } from "./utils/scoreCache";
+ 
+ export type ItemIterator<TItem> = (source: TItem) => string;
+ 
+@@ -36,36 +37,21 @@ export function sort<TItem>(
+   query: string,
+   options: SortOptions<TItem>
+ ): SortIterator<TItem> {
+-  const cacheMap: Map<string, number> = new Map();
++  // `match` is expensive (it reshapes both strings and walks the whole source),
++  // and `Array.prototype.sort` asks for the same score again and again. The
++  // cache must key off `undefined`, not off truthiness, or every score of 0 is
++  // recomputed on every comparison it takes part in.
++  const scoreOf = createScoreCache(
++    (source: string): number =>
++      match(query, source, {
++        withScore: true,
++        caseSensitive: options.caseSensitive,
++      }).score as number
++  );
+ 
+   return (leftItem, rightItem) => {
+-    const leftSource = options.iterator(leftItem);
+-    const rightSource = options.iterator(rightItem);
+-
+-    const cachedLeftMatch = cacheMap.get(leftSource);
+-    const cachedRightMatch = cacheMap.get(rightSource);
+-
+-    const leftScore = cachedLeftMatch
+-      ? cachedLeftMatch
+-      : match(query, leftSource, {
+-          withScore: true,
+-          caseSensitive: options.caseSensitive,
+-        }).score;
+-
+-    const rightScore = cachedRightMatch
+-      ? cachedRightMatch
+-      : match(query, rightSource, {
+-          withScore: true,
+-          caseSensitive: options.caseSensitive,
+-        }).score;
+-
+-    if (!cacheMap.has(leftSource)) {
+-      cacheMap.set(leftSource, leftScore);
+-    }
+-
+-    if (!cacheMap.has(rightSource)) {
+-      cacheMap.set(rightSource, rightScore);
+-    }
++    const leftScore = scoreOf(options.iterator(leftItem));
++    const rightScore = scoreOf(options.iterator(rightItem));
+ 
+     if (rightScore === leftScore) {
+       return 0;
+diff --git a/src/test.ts b/src/test.ts
+index e0f9f9f..9dd7193 100644
+--- a/src/test.ts
++++ b/src/test.ts
+@@ -41,6 +41,14 @@ export function test(
+   let queryPos = 0;
+   let sourcePos = 0;
+ 
++  // The loop below walks `source` by index but reads `reshapedSource`, which
++  // is shorter when the input contains explicit combining marks (a decomposed
++  // "café" becomes "cafe"). In that ragged case the original loop relies on
++  // `undefined === undefined` and can end up counting one extra match, so the
++  // early return is only taken when both lengths agree — that keeps the
++  // observable result byte-identical.
++  const canStopEarly = reshapedSource.length === source.length;
++
+   // loop on source string
+   while (sourcePos < source.length) {
+     const actualSourceCharacter = reshapedSource[sourcePos];
+@@ -50,6 +58,12 @@ export function test(
+     if (actualSourceCharacter === queryCharacterWaitingForMatch) {
+       // move query pos
+       queryPos += 1;
++
++      // every query character has been matched: the remaining characters
++      // cannot change the answer, so there is no point walking them
++      if (canStopEarly && queryPos === reshapedQuery.length) {
++        return true;
++      }
+     }
+ 
+     sourcePos += 1;
+diff --git a/src/utils/__tests__/scoreCache.test.ts b/src/utils/__tests__/scoreCache.test.ts
+new file mode 100644
+index 0000000..3be69b3
+--- /dev/null
++++ b/src/utils/__tests__/scoreCache.test.ts
+@@ -0,0 +1,67 @@
++import test from "ava";
++import { createScoreCache } from "../scoreCache";
++
++test("computes each distinct source exactly once", (t) => {
++  const calls: string[] = [];
++  const score = createScoreCache((source) => {
++    calls.push(source);
++    return source.length;
++  });
++
++  score("ab");
++  score("ab");
++  score("abc");
++  score("ab");
++
++  t.deepEqual(calls, ["ab", "abc"]);
++  t.is(score("ab"), 2);
++  t.is(score("abc"), 3);
++});
++
++test("caches a score of 0 instead of recomputing it", (t) => {
++  // Regression: `sort` used `cache.get(source) ? cached : compute(...)`, so a
++  // legitimate score of 0 (no match at all, or a match whose score nets to 0)
++  // was treated as a cache miss and recomputed on every comparison.
++  let calls = 0;
++  const score = createScoreCache(() => {
++    calls += 1;
++    return 0;
++  });
++
++  t.is(score("foobar"), 0);
++  t.is(score("foobar"), 0);
++  t.is(score("foobar"), 0);
++
++  t.is(calls, 1, "a cached 0 must not trigger a new computation");
++});
++
++test("caches negative scores", (t) => {
++  let calls = 0;
++  const score = createScoreCache((source) => {
++    calls += 1;
++    return -source.length;
++  });
++
++  t.is(score("abc"), -3);
++  t.is(score("abc"), -3);
++  t.is(calls, 1);
++});
++
++test("does not confuse two different sources with the same length", (t) => {
++  const score = createScoreCache((source) => (source === "abc" ? 10 : 0));
++
++  t.is(score("abc"), 10);
++  t.is(score("xyz"), 0);
++  t.is(score("abc"), 10);
++});
++
++test("passes the source through to the computer untouched", (t) => {
++  const seen: string[] = [];
++  const score = createScoreCache((source) => {
++    seen.push(source);
++    return 1;
++  });
++
++  score("  MiXeD Café  ");
++  t.deepEqual(seen, ["  MiXeD Café  "]);
++});
+diff --git a/src/utils/isLeading.ts b/src/utils/isLeading.ts
+index de9f486..2c30b0a 100644
+--- a/src/utils/isLeading.ts
++++ b/src/utils/isLeading.ts
+@@ -19,7 +19,23 @@ export function isLeading(prevChar: string, char: string): boolean {
+     prevChar === "/" ||
+     prevChar === "\\";
+ 
+-  const isCharLeading = char.toUpperCase() === char && /\w/.test(toLatin(char));
++  if (precededBySeparator) {
++    return true;
++  }
+ 
+-  return precededBySeparator || isCharLeading;
++  const code = char.charCodeAt(0);
++
++  // Fast path for ASCII. `toLatin` is the identity on ASCII (no ASCII
++  // character lives in the combining diacritical block) and `/\w/` is exactly
++  // `[A-Za-z0-9_]`, so `char.toUpperCase() === char && /\w/.test(toLatin(char))`
++  // reduces to "A-Z, 0-9 or _". This is the branch that runs for every
++  // character of every ASCII source, and it used to pay for a `normalize()`
++  // plus a regex allocation each time.
++  if (code < 128) {
++    return (
++      (code >= 65 && code <= 90) || (code >= 48 && code <= 57) || code === 95
++    );
++  }
++
++  return char.toUpperCase() === char && /\w/.test(toLatin(char));
+ }
+diff --git a/src/utils/prepare.ts b/src/utils/prepare.ts
+index 32dfd29..a7d96cd 100644
+--- a/src/utils/prepare.ts
++++ b/src/utils/prepare.ts
+@@ -1,5 +1,30 @@
+ import { TestOptions } from "../test";
+ 
++/** Any character outside 7-bit ASCII. */
++// eslint-disable-next-line no-control-regex -- matching the ASCII range is the point
++const NON_ASCII = /[^\x00-\x7f]/;
++
++/** Combining diacritical marks, stripped after the NFD decomposition. */
++const COMBINING_MARKS = /[\u0300-\u036f]/g;
++
++/**
++ * Removes accents from a string.
++ *
++ * `normalize("NFD")` and the mark-stripping replace are both identity on pure
++ * ASCII — no ASCII character has a decomposition — so testing for ASCII first
++ * skips two full passes (and two allocations) on the most common input.
++ *
++ * @param str The input string
++ * @returns The input string without accents
++ */
++function stripAccents(str: string): string {
++  if (!NON_ASCII.test(str)) {
++    return str;
++  }
++
++  return str.normalize("NFD").replace(COMBINING_MARKS, "");
++}
++
+ /**
+  * This functions is used to throw when query or source is not defined as well
+  * as normalizing and lower casing the input strings.
+@@ -22,8 +47,8 @@ export function reshapeInput(
+     throw new TypeError("Expecting source to be a string");
+   }
+ 
+-  let reshapedQuery = query.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+-  let reshapedSource = source.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
++  let reshapedQuery = stripAccents(query);
++  let reshapedSource = stripAccents(source);
+ 
+   if (!opts.caseSensitive) {
+     reshapedQuery = reshapedQuery.toLowerCase();
+diff --git a/src/utils/scoreCache.ts b/src/utils/scoreCache.ts
+new file mode 100644
+index 0000000..ea7c619
+--- /dev/null
++++ b/src/utils/scoreCache.ts
+@@ -0,0 +1,31 @@
++export type ScoreComputer = (source: string) => number;
++
++/**
++ * Memoizes a `source -> score` computation.
++ *
++ * `undefined` is the only marker for "not computed yet". A score of `0` is a
++ * perfectly legitimate result — it is what `match` returns for a source that
++ * does not match at all, and also for a match whose increments are cancelled
++ * out by the `-1` penalty of the characters around it — so it must be cached
++ * like any other value. Testing the cached value for truthiness instead made
++ * every zero-score source be recomputed on every comparison; since a filter
++ * usually leaves most sources unmatched, that is the common case, not the edge
++ * case.
++ */
++export function createScoreCache(compute: ScoreComputer): ScoreComputer {
++  const cache: Map<string, number> = new Map();
++
++  return function score(source: string): number {
++    const cached = cache.get(source);
++
++    if (cached !== undefined) {
++      return cached;
++    }
++
++    const computed = compute(source);
++
++    cache.set(source, computed);
++
++    return computed;
++  };
++}
